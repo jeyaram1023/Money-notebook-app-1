@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Monthly Expense Report - Money Notebook</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 30px;
+      min-height: 100vh;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(10px);
+      border-radius: 20px;
+      padding: 30px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+      animation: fadeIn 1s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(30px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 32px;
+      margin-bottom: 25px;
+      background: linear-gradient(90deg, #00c6ff, #0072ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      gap: 15px;
+    }
+
+    .controls label {
+      font-size: 16px;
+    }
+
+    select, button {
+      padding: 10px 18px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      outline: none;
+      transition: all 0.3s ease;
+    }
+
+    select {
+      background: linear-gradient(to right, #434343, #000000);
+      color: #ffffff;
+      border: 1px solid #666;
+    }
+
+    button {
+      background: linear-gradient(to right, #00c6ff, #0072ff);
+      color: #fff;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    button:hover {
+      transform: scale(1.05);
+      box-shadow: 0 0 10px #00c6ff;
+    }
+
+    #totalMonthlyDisplay {
+      font-size: 20px;
+      font-weight: bold;
+      margin: 15px 0;
+      color: #00ffe0;
+      text-align: center;
+    }
+
+    .chart-container {
+      width: 100%;
+      max-height: 420px;
+      position: relative;
+    }
+
+    canvas {
+      animation: slideUp 0.8s ease-in-out;
+    }
+
+    @keyframes slideUp {
+      from {
+        transform: translateY(20px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    #noDataMessage {
+      text-align: center;
+      font-size: 18px;
+      color: #bbbbbb;
+      padding: 30px;
+      background-color: rgba(0, 0, 0, 0.3);
+      border-radius: 10px;
+    }
+
+    @media screen and (max-width: 600px) {
+      .controls {
+        flex-direction: column;
+        align-items: stretch;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Monthly Expense Report</h1>
+    <div class="controls">
+      <div>
+        <label for="monthSelector">Select Month:</label>
+        <select id="monthSelector"></select>
+      </div>
+      <button onclick="window.location.href='index.html'">⬅ Back to Main</button>
+    </div>
+    <div id="totalMonthlyDisplay"></div>
+    <div class="chart-container">
+      <canvas id="monthlyExpenseChart"></canvas>
+      <div id="noDataMessage" style="display: none;">No expense data available for the selected month.</div>
+    </div>
+  </div>
+
+  <script>
+    const monthSelector = document.getElementById('monthSelector');
+    const chartCanvas = document.getElementById('monthlyExpenseChart');
+    const totalMonthlyDisplay = document.getElementById('totalMonthlyDisplay');
+    const noDataMessageDiv = document.getElementById('noDataMessage');
+    const dbName = 'moneyNotebook';
+    let db;
+    let allTransactions = [];
+    let monthlyChartInstance;
+
+    const expenseCategories = ['Food', 'Entertainment', 'Bills', 'Travel', 'Shopping', 'Other'];
+    const categoryColors = ['#ff4d4d', '#ff9800', '#2196f3', '#8e24aa', '#ff5722', '#aaaaaa'];
+
+    const openDb = () => new Promise((resolve, reject) => {
+      const request = indexedDB.open(dbName, 1);
+      request.onerror = (event) => reject(event.target.error);
+      request.onsuccess = (event) => {
+        db = event.target.result;
+        resolve(db);
+      };
+    });
+
+    const loadAllTransactions = () => new Promise((resolve, reject) => {
+      const transaction = db.transaction(['transactions'], 'readonly');
+      const store = transaction.objectStore('transactions');
+      const getAllRequest = store.getAll();
+      getAllRequest.onsuccess = (event) => {
+        allTransactions = event.target.result;
+        resolve(allTransactions);
+      };
+      getAllRequest.onerror = (event) => reject(event.target.error);
+    });
+
+    const getMonthIndex = (monthName) => new Date(Date.parse(monthName + " 1, 2020")).getMonth();
+
+    const populateMonthSelector = () => {
+      const uniqueMonths = [...new Set(allTransactions.map(t => t.month))]
+        .sort((a, b) => {
+          const dateA = new Date(a.split(" ")[1], getMonthIndex(a.split(" ")[0]));
+          const dateB = new Date(b.split(" ")[1], getMonthIndex(b.split(" ")[0]));
+          return dateB - dateA;
+        });
+
+      monthSelector.innerHTML = '';
+      if (uniqueMonths.length === 0) {
+        const option = document.createElement('option');
+        option.value = "";
+        option.textContent = "No Data";
+        monthSelector.appendChild(option);
+        monthSelector.disabled = true;
+        return;
+      }
+
+      uniqueMonths.forEach(month => {
+        const option = document.createElement('option');
+        option.value = month;
+        option.textContent = month;
+        monthSelector.appendChild(option);
+      });
+
+      renderMonthlyBarChart(monthSelector.value);
+    };
+
+    const renderMonthlyBarChart = (selectedMonth) => {
+      if (monthlyChartInstance) {
+        monthlyChartInstance.destroy();
+      }
+
+      displayNoDataMessage(false);
+      const monthlyTransactions = allTransactions.filter(t => t.month === selectedMonth && t.amount < 0);
+
+      if (monthlyTransactions.length === 0) {
+        totalMonthlyDisplay.textContent = `Total Expenses for ${selectedMonth}: ₹0.00`;
+        displayNoDataMessage(true);
+        return;
+      }
+
+      const chartData = {
+        labels: [],
+        datasets: [{
+          label: `Expenses for ${selectedMonth}`,
+          data: [],
+          backgroundColor: [],
+          borderColor: [],
+          borderWidth: 1
+        }]
+      };
+
+      let totalExpenses = 0;
+      const categoryTotals = {};
+      expenseCategories.forEach(cat => categoryTotals[cat] = 0);
+
+      monthlyTransactions.forEach(t => {
+        const amount = Math.abs(t.amount);
+        if (expenseCategories.includes(t.category)) {
+          categoryTotals[t.category] += amount;
+        } else {
+          categoryTotals['Other'] += amount;
+        }
+        totalExpenses += amount;
+      });
+
+      totalMonthlyDisplay.textContent = `Total Expenses for ${selectedMonth}: ₹${totalExpenses.toFixed(2)}`;
+
+      let colorIndex = 0;
+      for (const category in categoryTotals) {
+        if (categoryTotals[category] > 0) {
+          chartData.labels.push(category);
+          chartData.datasets[0].data.push(categoryTotals[category].toFixed(2));
+          chartData.datasets[0].backgroundColor.push(categoryColors[colorIndex % categoryColors.length]);
+          chartData.datasets[0].borderColor.push(categoryColors[colorIndex % categoryColors.length]);
+          colorIndex++;
+        }
+      }
+
+      if (chartData.labels.length === 0) {
+        displayNoDataMessage(true);
+        return;
+      }
+
+      monthlyChartInstance = new Chart(chartCanvas, {
+        type: 'bar',
+        data: chartData,
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: {
+            duration: 1000,
+            easing: 'easeOutQuart'
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { color: '#ffffff' },
+              grid: { color: '#444444' }
+            },
+            x: {
+              ticks: { color: '#ffffff' },
+              grid: { color: '#444444' }
+            }
+          },
+          plugins: {
+            legend: {
+              labels: {
+                color: '#ffffff'
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  let label = context.dataset.label || '';
+                  if (label) label += ': ';
+                  if (context.parsed.y !== null) label += `₹${context.parsed.y}`;
+                  return label;
+                }
+              }
+            }
+          }
+        }
+      });
+    };
+
+    const displayNoDataMessage = (show) => {
+      noDataMessageDiv.style.display = show ? 'block' : 'none';
+      chartCanvas.style.display = show ? 'none' : 'block';
+    };
+
+    monthSelector.addEventListener('change', (e) => {
+      if (e.target.value) {
+        renderMonthlyBarChart(e.target.value);
+      } else {
+        displayNoDataMessage(true);
+        totalMonthlyDisplay.textContent = '';
+      }
+    });
+
+    openDb().then(loadAllTransactions).then(populateMonthSelector).catch(err => {
+      console.error("Initialization failed:", err);
+      displayNoDataMessage(true);
+    });
+  </script>
+</body>
+</html>
